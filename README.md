@@ -1,0 +1,105 @@
+# 🃏 小丑牌 CLI
+
+一个命令行版的 Balatro 风格扑克牌 Roguelike 游戏！
+
+[![npm version](https://img.shields.io/npm/v/clown-card-cli.svg)](https://www.npmjs.com/package/clown-card-cli)
+[![npm license](https://img.shields.io/npm/l/clown-card-cli.svg)](https://www.npmjs.com/package/clown-card-cli)
+
+## 功能特性
+
+- 🎴 完整的扑克牌系统
+- ♠ 各种牌型判断（对子、顺子、同花、炸弹等）
+- 🎭 30 种不同的小丑牌，具有各种加成效果
+- 🏪 商店系统，可以购买和出售小丑牌
+- 📈 难度递进系统（盲注）
+- 💾 存档系统
+
+## 快速开始
+
+### 全局安装（推荐）
+
+```bash
+npm install -g clown-card-cli
+clown-card
+```
+
+### 使用 npx 直接运行
+
+```bash
+npx clown-card-cli
+```
+
+### 本地开发
+
+```bash
+git clone https://github.com/gyxiaoz/clown-card-cli.git
+cd clown-card-cli
+npm install
+npm start
+```
+
+## 游戏玩法
+
+1. **出牌**：选择 1-5 张牌来组成一个牌型
+2. **弃牌**：丢弃不需要的牌，换取新牌
+3. **收集小丑牌**：在商店购买各种具有特殊效果的小丑牌
+4. **出售小丑牌**：在商店出售不需要的小丑牌（售价为原价的 1/3）
+5. **达到分数目标**：在回合结束前达到所需分数即可进入下一轮
+
+## 计分规则
+
+最终得分 =（**牌面筹码** + 牌型基础筹码 + 小丑牌 chipBonus）×（牌型基础倍率 + 小丑牌 multBonus）
+
+**牌面筹码**：
+- 2–10：牌面数字（2=2、3=3…10=10）
+- J/Q/K/A：都是 10
+- 只计算**构成牌型**的牌，不计算所有打出的牌
+
+## 牌型说明
+
+| 牌型 | 分数基准 | 倍率 |
+|------|---------|------|
+| 高牌 | 5 | x1 |
+| 对子 | 10 | x2 |
+| 两对 | 20 | x2 |
+| 三条 | 30 | x3 |
+| 顺子 | 30 | x4 |
+| 同花 | 35 | x4 |
+| 葫芦 | 40 | x4 |
+| 炸弹 | 60 | x7 |
+| 同花顺 | 100 | x8 |
+| 皇家同花顺 | 100 | x8 |
+| 五同 | 120 | x12 |
+
+## 小丑牌稀有度
+
+- 普通 - 灰色（16 张）
+- 稀有 - 绿色（8 张）
+- 史诗 - 蓝色（4 张）
+- 传说 - 金色（2 张）
+
+## 项目结构
+
+```
+clown-card-cli/
+├── src/
+│   ├── index.js          # 游戏入口
+│   ├── game.js           # 游戏状态管理
+│   ├── cards.js          # 扑克牌核心逻辑
+│   ├── handEvaluator.js  # 牌型判断
+│   ├── jokers.js         # 小丑牌系统
+│   ├── ui.js             # 命令行界面
+│   └── save.js           # 存档系统
+├── package.json
+└── README.md
+```
+
+## 技术栈
+
+- Node.js (ES Modules)
+- chalk - 终端颜色
+- inquirer - 交互式命令行界面
+
+## License
+
+MIT
