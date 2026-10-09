@@ -8,19 +8,33 @@
 // multBonus:  倍率加成 - 直接加到基础倍率上的数值
 //             例：{ multBonus: 4 } → 总倍率 = 基础倍率 + 4
 //
-// multMult:   倍率乘法 - 对总倍率进行乘法（覆盖式，后生效的覆盖先生效的）
+// multMult:   倍率乘法 - 对总倍率连乘（多张小丑的 multMult 相乘）
 //             例：{ multMult: 3 } → 总倍率 = (基础倍率 + multBonus) × 3
+//             赌徒掷出 ×0 时，这手分数为 0
 //
 // scoreMult:  得分乘法 - 对最终得分进行乘法（覆盖式，后生效的覆盖先生效的）
 //             例：{ scoreMult: 1.5 } → 最终得分 = 筹码 × 倍率 × 1.5
 //
+// 其他钩子：
+// onDiscard(state, joker)  弃牌时
+// onCashOut(state, joker)  回合结算时，返回获得的金钱
+// modifyRound(stats, joker) 盲注开始时修改 hands / discards / handSize
+//
 // 计算顺序：
-// 1. 计算基础筹码和基础倍率（来自牌型）
+// 1. 计算基础筹码和基础倍率（来自牌型；燧石会先减半）
 // 2. 累加所有小丑牌的 chipBonus 和 multBonus
-// 3. 如果有 multMult，应用倍率乘法
-// 4. 计算得分：(筹码 + chipBonus) × max(1, 倍率 + multBonus) × multMult
+// 3. 连乘所有 multMult
+// 4. 计算得分：筹码 × 倍率
 // 5. 如果有 scoreMult，应用得分乘法
 
+
+function scoringCards(state) {
+  return (state.hand || []).filter(card => !state.isDebuffed?.(card));
+}
+
+function countSuit(state, suit) {
+  return scoringCards(state).filter(card => card.suit === suit).length;
+}
 
 export const JOKER_TYPES = {
   // 普通 (16张)
@@ -74,10 +88,7 @@ export const JOKER_TYPES = {
     description: '打出的牌中每张红桃 +3 倍率',
     rarity: '普通',
     cost: 5,
-    effect: (state) => {
-      const heartCount = state.hand?.filter(c => c.suit === '♥').length || 0;
-      return { multBonus: heartCount * 3 };
-    }
+    effect: (state) => ({ multBonus: countSuit(state, '♥') * 3 })
   },
   WRATHFUL_JOKER: {
     id: 'wrathful_joker',
@@ -85,10 +96,7 @@ export const JOKER_TYPES = {
     description: '打出的牌中每张黑桃 +3 倍率',
     rarity: '普通',
     cost: 5,
-    effect: (state) => {
-      const spadeCount = state.hand?.filter(c => c.suit === '♠').length || 0;
-      return { multBonus: spadeCount * 3 };
-    }
+    effect: (state) => ({ multBonus: countSuit(state, '♠') * 3 })
   },
   GLUTTONOUS_JOKER: {
     id: 'gluttonous_joker',
@@ -96,10 +104,7 @@ export const JOKER_TYPES = {
     description: '打出的牌中每张梅花 +3 倍率',
     rarity: '普通',
     cost: 5,
-    effect: (state) => {
-      const clubCount = state.hand?.filter(c => c.suit === '♣').length || 0;
-      return { multBonus: clubCount * 3 };
-    }
+    effect: (state) => ({ multBonus: countSuit(state, '♣') * 3 })
   },
   SLOTHFUL_JOKER: {
     id: 'slothful_joker',
@@ -107,10 +112,7 @@ export const JOKER_TYPES = {
     description: '打出的牌中每张方块 +3 倍率',
     rarity: '普通',
     cost: 5,
-    effect: (state) => {
-      const diamondCount = state.hand?.filter(c => c.suit === '♦').length || 0;
-      return { multBonus: diamondCount * 3 };
-    }
+    effect: (state) => ({ multBonus: countSuit(state, '♦') * 3 })
   },
   BANNER: {
     id: 'banner',
@@ -297,10 +299,7 @@ export const JOKER_TYPES = {
     description: '每张红桃 +40 筹码',
     rarity: '稀有',
     cost: 7,
-    effect: (state) => {
-      const heartCount = state.hand?.filter(c => c.suit === '♥').length || 0;
-      return { chipBonus: heartCount * 40 };
-    }
+    effect: (state) => ({ chipBonus: countSuit(state, '♥') * 40 })
   },
   BLACK_CARD: {
     id: 'black_card',
@@ -308,10 +307,7 @@ export const JOKER_TYPES = {
     description: '每张黑桃 +40 筹码',
     rarity: '稀有',
     cost: 7,
-    effect: (state) => {
-      const spadeCount = state.hand?.filter(c => c.suit === '♠').length || 0;
-      return { chipBonus: spadeCount * 40 };
-    }
+    effect: (state) => ({ chipBonus: countSuit(state, '♠') * 40 })
   },
 
   // 史诗 (4张)
@@ -378,6 +374,151 @@ export const JOKER_TYPES = {
     rarity: '传说',
     cost: 22,
     effect: (state) => ({ scoreMult: 1.5 })
+  },
+
+  HALF_JOKER: {
+    id: 'half_joker',
+    name: '半张小丑',
+    description: '打出不超过 3 张牌时 +20 倍率',
+    rarity: '普通',
+    cost: 5,
+    effect: (state) => {
+      if ((state.hand?.length || 0) <= 3) return { multBonus: 20 };
+      return {};
+    }
+  },
+  ABSTRACT_JOKER: {
+    id: 'abstract_joker',
+    name: '抽象小丑',
+    description: '每张小丑牌 +3 倍率',
+    rarity: '普通',
+    cost: 4,
+    effect: (state) => ({ multBonus: (state.jokerCount || 0) * 3 })
+  },
+  SHOOT_THE_MOON: {
+    id: 'shoot_the_moon',
+    name: '射月',
+    description: '手牌中每张 Q +13 倍率',
+    rarity: '普通',
+    cost: 5,
+    effect: (state) => {
+      const queens = (state.heldCards || []).filter(card => card.rank === 'Q').length;
+      return { multBonus: queens * 13 };
+    }
+  },
+  GREEN_JOKER: {
+    id: 'green_joker',
+    name: '绿色小丑',
+    description: '每出一次牌 +1 倍率，每弃一次牌 -1 倍率',
+    rarity: '普通',
+    cost: 4,
+    initialData: () => ({ mult: 0 }),
+    effect: (state, joker) => {
+      joker.data.mult = (joker.data.mult || 0) + 1;
+      return { multBonus: joker.data.mult };
+    },
+    onDiscard: (state, joker) => {
+      joker.data.mult = Math.max(0, (joker.data.mult || 0) - 1);
+    }
+  },
+  SUPERNOVA: {
+    id: 'supernova',
+    name: '超新星',
+    description: '倍率加上本局该牌型已出次数（含本次）',
+    rarity: '普通',
+    cost: 5,
+    effect: (state) => {
+      const type = state.handResult?.type;
+      if (!type) return {};
+      return { multBonus: state.handTypeCounts?.[type] || 0 };
+    }
+  },
+  ACROBAT: {
+    id: 'acrobat',
+    name: '杂技演员',
+    description: '最后一次出牌 ×3 倍率',
+    rarity: '稀有',
+    cost: 8,
+    effect: (state) => {
+      if (state.handsRemaining === 1) return { multMult: 3 };
+      return {};
+    }
+  },
+  BARON: {
+    id: 'baron',
+    name: '男爵',
+    description: '手牌中每张 K ×1.5 倍率',
+    rarity: '稀有',
+    cost: 8,
+    effect: (state) => {
+      const kings = (state.heldCards || []).filter(card => card.rank === 'K').length;
+      if (kings === 0) return {};
+      return { multMult: 1.5 ** kings };
+    }
+  },
+  DELAYED_GRATIFICATION: {
+    id: 'delayed_gratification',
+    name: '延迟满足',
+    description: '本盲注没有弃牌时，每个剩余弃牌 +$2',
+    rarity: '普通',
+    cost: 4,
+    onCashOut: (state) => {
+      if ((state.discardsUsed || 0) > 0) return 0;
+      return (state.discardsRemaining || 0) * 2;
+    }
+  },
+  ROCKET: {
+    id: 'rocket',
+    name: '火箭',
+    description: '回合结束 +$1，每击败一个 Boss 奖励 +$2',
+    rarity: '稀有',
+    cost: 7,
+    initialData: () => ({ payout: 1 }),
+    onCashOut: (state, joker) => joker.data.payout ?? 1
+  },
+  CLOUD_9: {
+    id: 'cloud_9',
+    name: '云 9',
+    description: '回合结束时，牌组里每张 9 +$1',
+    rarity: '稀有',
+    cost: 7,
+    onCashOut: (state) => state.ninesInDeck || 0
+  },
+  JUGGLER: {
+    id: 'juggler',
+    name: '杂耍小丑',
+    description: '手牌上限 +1',
+    rarity: '普通',
+    cost: 4,
+    modifyRound: (stats) => {
+      stats.handSize += 1;
+    }
+  },
+  DRUNKARD: {
+    id: 'drunkard',
+    name: '醉汉',
+    description: '弃牌次数 +1',
+    rarity: '普通',
+    cost: 4,
+    modifyRound: (stats) => {
+      stats.discards += 1;
+    }
+  },
+  FOUR_FINGERS: {
+    id: 'four_fingers',
+    name: '四指',
+    description: '顺子和同花可以只用 4 张牌',
+    rarity: '稀有',
+    cost: 7,
+    effect: () => ({})
+  },
+  BLUEPRINT: {
+    id: 'blueprint',
+    name: '蓝图',
+    description: '复制右侧相邻小丑的出牌效果',
+    rarity: '稀有',
+    cost: 8,
+    effect: () => ({})
   }
 };
 
@@ -389,26 +530,59 @@ export const RARITY_COLORS = {
 };
 
 export class Joker {
-  constructor(type) {
+  constructor(type, data) {
     const jokerType = JOKER_TYPES[type];
     if (!jokerType) throw new Error(`未知的小丑牌类型: ${type}`);
 
+    this.typeKey = type;
     this.id = jokerType.id;
     this.name = jokerType.name;
     this.description = jokerType.description;
     this.rarity = jokerType.rarity;
     this.cost = jokerType.cost;
-    this.effectFn = jokerType.effect;
+    this.effectFn = jokerType.effect || (() => ({}));
+    this.onDiscardFn = jokerType.onDiscard || null;
+    this.onCashOutFn = jokerType.onCashOut || null;
+    this.modifyRoundFn = jokerType.modifyRound || null;
     this.enabled = true;
+    if (data && typeof data === 'object') {
+      this.data = { ...data };
+    } else if (typeof jokerType.initialData === 'function') {
+      this.data = jokerType.initialData();
+    } else {
+      this.data = {};
+    }
   }
 
   applyEffect(state) {
     if (!this.enabled) return {};
-    return this.effectFn(state);
+    return this.effectFn(state, this) || {};
+  }
+
+  onDiscard(state) {
+    if (!this.enabled || !this.onDiscardFn) return;
+    this.onDiscardFn(state, this);
+  }
+
+  onCashOut(state) {
+    if (!this.enabled || !this.onCashOutFn) return 0;
+    return this.onCashOutFn(state, this) || 0;
+  }
+
+  modifyRound(stats) {
+    if (!this.enabled || !this.modifyRoundFn) return;
+    this.modifyRoundFn(stats, this);
+  }
+
+  extraLine() {
+    if (this.id === 'green_joker') return `（当前 +${this.data.mult || 0} 倍率）`;
+    if (this.id === 'rocket') return `（当前 +$${this.data.payout ?? 1}）`;
+    return '';
   }
 
   toString() {
-    return `[${this.rarity}] ${this.name}: ${this.description}`;
+    const extra = this.extraLine();
+    return `[${this.rarity}] ${this.name}: ${this.description}${extra ? ' ' + extra : ''}`;
   }
 }
 

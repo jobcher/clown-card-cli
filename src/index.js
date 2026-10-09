@@ -26,7 +26,6 @@ async function main() {
       } else {
         console.log('存档损坏，开始新游戏...');
         game = new GameState();
-        game.drawInitialHand();
       }
     } else if (action === 'delete') {
       SaveManager.deleteSave();
@@ -37,10 +36,8 @@ async function main() {
         process.exit(0);
       }
       game = new GameState();
-      game.drawInitialHand();
     } else {
       game = new GameState();
-      game.drawInitialHand();
     }
   } else {
     const cont = await UI.askContinue();
@@ -49,7 +46,6 @@ async function main() {
       process.exit(0);
     }
     game = new GameState();
-    game.drawInitialHand();
   }
 
   while (true) {
@@ -61,6 +57,17 @@ async function main() {
     if (game.isRoundComplete()) {
       if (game.isVictory()) {
         UI.printVictory();
+        const payout = game.cashOut();
+        UI.printCashOut(payout);
+
+        if (game.isAnteFinalBoss()) {
+          UI.printRunClear();
+          const endless = await UI.askEndless();
+          if (!endless) {
+            SaveManager.deleteSave();
+            break;
+          }
+        }
 
         // 商店主循环 - 先生成一次商店小丑牌
         let shopJokers = [
@@ -101,7 +108,7 @@ async function main() {
               const joker = shopJokers[choice];
               if (game.buyJoker(joker)) {
                 console.log(chalk.green(`购买了 ${joker.name}!`));
-                shopJokers.splice(choice, 1); // 从商店移除已购买的
+                shopJokers.splice(choice, 1);
               } else {
                 console.log(chalk.red('购买失败!'));
               }
@@ -161,6 +168,12 @@ async function main() {
 
         if (indices.length > 0) {
           const result = game.playHand(indices);
+
+          if (result?.error) {
+            console.log(chalk.red(`\n${result.error}\n`));
+            await UI.askContinue();
+            continue;
+          }
 
           UI.clear();
           UI.printHeader(game);

@@ -16,9 +16,11 @@ export const HAND_TYPES = {
 };
 
 export class HandEvaluator {
-  static evaluate(cards) {
+  static evaluate(cards, options = {}) {
     if (cards.length < 1) return null;
 
+    const minStraight = options.fourFingers ? 4 : 5;
+    const minFlush = options.fourFingers ? 4 : 5;
     const sorted = [...cards].sort((a, b) => b.value - a.value);
     const rankCounts = this.getRankCounts(sorted);
     const suitCounts = this.getSuitCounts(sorted);
@@ -31,7 +33,7 @@ export class HandEvaluator {
     const royalFlush = this.checkRoyalFlush(sorted, suitCounts);
     if (royalFlush) results.push(royalFlush);
 
-    const straightFlush = this.checkStraightFlush(sorted, suitCounts);
+    const straightFlush = this.checkStraightFlush(sorted, suitCounts, minStraight);
     if (straightFlush) results.push(straightFlush);
 
     const fourOfAKind = this.checkFourOfAKind(rankCounts, sorted);
@@ -40,10 +42,10 @@ export class HandEvaluator {
     const fullHouse = this.checkFullHouse(rankCounts, sorted);
     if (fullHouse) results.push(fullHouse);
 
-    const flush = this.checkFlush(suitCounts, sorted);
+    const flush = this.checkFlush(suitCounts, sorted, minFlush);
     if (flush) results.push(flush);
 
-    const straight = this.checkStraight(sorted);
+    const straight = this.checkStraight(sorted, minStraight);
     if (straight) results.push(straight);
 
     const threeOfAKind = this.checkThreeOfAKind(rankCounts, sorted);
@@ -121,11 +123,11 @@ export class HandEvaluator {
     return null;
   }
 
-  static checkStraightFlush(cards, suitCounts) {
+  static checkStraightFlush(cards, suitCounts, minStraight = 5) {
     for (const [suit, count] of Object.entries(suitCounts)) {
-      if (count >= 5) {
+      if (count >= minStraight) {
         const suitedCards = cards.filter(c => c.suit === suit).sort((a, b) => b.value - a.value);
-        const straight = this.findStraight(suitedCards);
+        const straight = this.findStraight(suitedCards, minStraight);
         if (straight) {
           return {
             type: 'STRAIGHT_FLUSH',
@@ -182,10 +184,11 @@ export class HandEvaluator {
     return null;
   }
 
-  static checkFlush(suitCounts, sorted) {
+  static checkFlush(suitCounts, sorted, minFlush = 5) {
     for (const [suit, count] of Object.entries(suitCounts)) {
-      if (count >= 5) {
-        const cards = sorted.filter(c => c.suit === suit).slice(0, 5);
+      const take = count >= 5 ? 5 : (count >= minFlush ? count : 0);
+      if (take > 0) {
+        const cards = sorted.filter(c => c.suit === suit).slice(0, take);
         return {
           type: 'FLUSH',
           primaryCard: cards[0],
@@ -198,8 +201,8 @@ export class HandEvaluator {
     return null;
   }
 
-  static checkStraight(sorted) {
-    const straight = this.findStraight(sorted);
+  static checkStraight(sorted, minStraight = 5) {
+    const straight = this.findStraight(sorted, minStraight);
     if (straight) {
       return {
         type: 'STRAIGHT',
@@ -212,32 +215,35 @@ export class HandEvaluator {
     return null;
   }
 
-  static findStraight(cards) {
-    if (cards.length < 5) return null;
+  static findStraight(cards, minLength = 5) {
+    const five = this.findStraightOfLength(cards, 5);
+    if (five) return five;
+    if (minLength <= 4) return this.findStraightOfLength(cards, 4);
+    return null;
+  }
+
+  static findStraightOfLength(cards, length) {
+    if (cards.length < length) return null;
 
     const uniqueValues = [...new Set(cards.map(c => c.value))].sort((a, b) => b - a);
 
-    for (let i = 0; i <= uniqueValues.length - 5; i++) {
+    for (let i = 0; i <= uniqueValues.length - length; i++) {
       let isStraight = true;
-      for (let j = 0; j < 4; j++) {
+      for (let j = 0; j < length - 1; j++) {
         if (uniqueValues[i + j] - uniqueValues[i + j + 1] !== 1) {
           isStraight = false;
           break;
         }
       }
       if (isStraight) {
-        const straightValues = uniqueValues.slice(i, i + 5);
+        const straightValues = uniqueValues.slice(i, i + length);
         return straightValues.map(v => cards.find(c => c.value === v));
       }
     }
 
-    if (uniqueValues.includes(14) && uniqueValues.includes(2) && uniqueValues.includes(3) && uniqueValues.includes(4) && uniqueValues.includes(5)) {
-      const ace = cards.find(c => c.value === 14);
-      const two = cards.find(c => c.value === 2);
-      const three = cards.find(c => c.value === 3);
-      const four = cards.find(c => c.value === 4);
-      const five = cards.find(c => c.value === 5);
-      return [five, four, three, two, ace];
+    const wheelValues = length === 5 ? [5, 4, 3, 2, 14] : [4, 3, 2, 14];
+    if (wheelValues.every(value => uniqueValues.includes(value))) {
+      return wheelValues.map(value => cards.find(c => c.value === value));
     }
 
     return null;

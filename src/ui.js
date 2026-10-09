@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import inquirer from 'inquirer';
 import { HAND_TYPES } from './handEvaluator.js';
 import { RARITY_COLORS } from './jokers.js';
+import { BLIND_LABELS, getBoss } from './blinds.js';
 
 export class UI {
   static clear() {
@@ -14,7 +15,15 @@ export class UI {
     console.log(chalk.bold.cyan('║') + chalk.bold.yellow('           ♠  小丑牌 CLI  ♥             ') + chalk.bold.cyan('║'));
     console.log(chalk.bold.cyan('╚════════════════════════════════════════╝\n'));
 
-    console.log(chalk.bold(`回合 ${game.round} | 盲注 ${game.ante}`));
+    const blindLabel = BLIND_LABELS[game.blind] || '小盲注';
+    console.log(chalk.bold(`第 ${game.ante} 关 · ${blindLabel}`));
+    if (game.blind === 'boss' && game.bossId) {
+      const boss = getBoss(game.bossId);
+      if (boss) {
+        console.log(chalk.red.bold(`Boss ${boss.name}`));
+        console.log(chalk.red(boss.description));
+      }
+    }
     console.log(chalk.gray('────────────────────────────────────────────'));
 
     const scoreProgress = Math.min(100, (game.score / game.scoreRequired) * 100);
@@ -42,7 +51,8 @@ export class UI {
     game.jokers.forEach((joker, index) => {
       const rarityColor = chalk.hex(RARITY_COLORS[joker.rarity]);
       const num = chalk.gray(`[${index + 1}]`);
-      console.log(`${num} ${rarityColor(`[${joker.rarity}]`)} ${rarityColor(joker.name)} - ${joker.description}`);
+      const extra = joker.extraLine ? joker.extraLine() : '';
+      console.log(`${num} ${rarityColor(`[${joker.rarity}]`)} ${rarityColor(joker.name)} - ${joker.description}${extra ? ' ' + chalk.gray(extra) : ''}`);
     });
     console.log();
   }
@@ -71,7 +81,6 @@ export class UI {
       }
       const borderColor = isHighlighted ? chalk.yellow : color;
 
-      const idxStr = ' ' + String(index) + '  ';
       let rankDisplay;
       if (card.rank === '10') {
         rankDisplay = ' 10 ';
@@ -99,7 +108,8 @@ export class UI {
       console.log(chalk.gray(`  牌面筹码: ${result.cardChips}`));
     }
     console.log(chalk.yellow(`  总筹码: ${result.chips}`));
-    console.log(chalk.magenta(`  倍率: x${result.mult}`));
+    const multText = Number.isInteger(result.mult) ? String(result.mult) : result.mult.toFixed(2);
+    console.log(chalk.magenta(`  倍率: x${multText}`));
     console.log(chalk.green.bold(`  得分: +${result.score.toLocaleString()}\n`));
   }
 
@@ -165,35 +175,32 @@ export class UI {
       { name: chalk.gray('← 返回上一步'), value: 'back' }
     ];
 
-    let selected = [];
-    while (true) {
-      const { indices } = await inquirer.prompt([
-        {
-          type: 'checkbox',
-          name: 'indices',
-          message: message + ' (先按空格选牌，再回车确认，或直接选择"返回")',
-          choices,
-          pageSize: 10,
-          validate: (selected) => {
-            if (selected.includes('back')) {
-              if (selected.length > 1) {
-                return '不能同时选择"返回"和牌';
-              }
-              return true;
+    const { indices } = await inquirer.prompt([
+      {
+        type: 'checkbox',
+        name: 'indices',
+        message: message + ' (先按空格选牌，再回车确认，或直接选择"返回")',
+        choices,
+        pageSize: 10,
+        validate: (selected) => {
+          if (selected.includes('back')) {
+            if (selected.length > 1) {
+              return '不能同时选择"返回"和牌';
             }
-            const actualSelected = selected.filter(i => i !== 'back');
-            if (actualSelected.length < minCards) return `请至少选择 ${minCards} 张牌，或选择"返回"`;
-            if (actualSelected.length > maxCards) return `最多选择 ${maxCards} 张牌`;
             return true;
           }
+          const actualSelected = selected.filter(i => i !== 'back');
+          if (actualSelected.length < minCards) return `请至少选择 ${minCards} 张牌，或选择"返回"`;
+          if (actualSelected.length > maxCards) return `最多选择 ${maxCards} 张牌`;
+          return true;
         }
-      ]);
-
-      if (indices.includes('back')) {
-        return 'back';
       }
-      return indices;
+    ]);
+
+    if (indices.includes('back')) {
+      return 'back';
     }
+    return indices;
   }
 
   static async askShop(money, maxJokers, jokerCount) {
@@ -203,7 +210,7 @@ export class UI {
     if (jokerCount > 0) {
       choices.push({ name: '💰 出售小丑牌', value: 'sell' });
     }
-    choices.push({ name: '➡️ 跳过，进入下一回合', value: 'skip' });
+    choices.push({ name: '➡️ 跳过，进入下一盲注', value: 'skip' });
 
     const { action } = await inquirer.prompt([
       {
@@ -297,12 +304,39 @@ export class UI {
     console.log(chalk.bold.red('\n💀 回合失败 💀\n'));
   }
 
+  static printCashOut(payout) {
+    console.log(chalk.bold('结算:'));
+    console.log(chalk.green(`  盲注奖励: +$${payout.reward}`));
+    console.log(chalk.green(`  剩余出牌: +$${payout.handsBonus}`));
+    console.log(chalk.green(`  利息: +$${payout.interest}`));
+    for (const entry of payout.jokerPayouts) {
+      console.log(chalk.green(`  ${entry.name}: +$${entry.amount}`));
+    }
+    console.log(chalk.green.bold(`  合计: +$${payout.total}\n`));
+  }
+
+  static printRunClear() {
+    console.log(chalk.bold.yellow('\n🏆 通关！你击败了第 8 关 Boss。\n'));
+  }
+
+  static async askEndless() {
+    const { endless } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'endless',
+        message: '继续无尽模式？',
+        default: true
+      }
+    ]);
+    return endless;
+  }
+
   static printGameOver(game) {
+    const blindLabel = BLIND_LABELS[game.blind] || '小盲注';
     console.log(chalk.bold.red('\n╔════════════════════════════════════════╗'));
     console.log(chalk.bold.red('║') + chalk.bold.yellow('             游戏结束!                  ') + chalk.bold.red('║'));
     console.log(chalk.bold.red('╚════════════════════════════════════════╝\n'));
-    console.log(chalk.bold(`最终回合: ${game.round}`));
-    console.log(chalk.bold(`最终盲注: ${game.ante}`));
+    console.log(chalk.bold(`最终关卡: 第 ${game.ante} 关 · ${blindLabel}`));
     console.log();
   }
 
@@ -326,7 +360,8 @@ export class UI {
     console.log(chalk.yellow('游戏玩法:'));
     console.log(chalk.gray('  • 出扑克牌来赚取分数'));
     console.log(chalk.gray('  • 收集小丑牌获得加成'));
-    console.log(chalk.gray('  • 在出牌次数用完前达到分数目标!'));
-    console.log(chalk.gray('  • 盲注越高 = 奖励越多但目标越难\n'));
+    console.log(chalk.gray('  • 每关依次通过小盲注、大盲注和 Boss 盲注'));
+    console.log(chalk.gray('  • 击败第 8 关 Boss 即可通关'));
+    console.log(chalk.gray('  • 结算时获得盲注奖励、剩余出牌奖金和利息\n'));
   }
 }
