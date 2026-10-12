@@ -4,6 +4,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { Card, Deck, Hand } from './cards.js';
 import { Joker, JOKER_TYPES } from './jokers.js';
+import { createConsumable } from './consumables.js';
+import { createHandLevels } from './handLevels.js';
 import { blindFromRound, bossForAnte } from './blinds.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -16,6 +18,26 @@ function jokerKeyById() {
     jokerMap[JOKER_TYPES[key].id] = key;
   });
   return jokerMap;
+}
+
+function serializeCard(card) {
+  return {
+    suit: card.suit,
+    rank: card.rank,
+    enhancement: card.enhancement || null,
+    edition: card.edition || null,
+    seal: card.seal || null,
+    bonusChips: card.bonusChips || 0
+  };
+}
+
+function restoreCard(card) {
+  return new Card(card.suit, card.rank, {
+    enhancement: card.enhancement || null,
+    edition: card.edition || null,
+    seal: card.seal || null,
+    bonusChips: card.bonusChips || 0
+  });
 }
 
 export function serializeGame(game) {
@@ -35,10 +57,21 @@ export function serializeGame(game) {
     maxJokers: game.maxJokers,
     playedHandTypes: game.playedHandTypes,
     handTypeCounts: game.handTypeCounts,
-    hand: game.hand.cards.map(card => ({ suit: card.suit, rank: card.rank })),
-    deck: game.deck.cards.map(card => ({ suit: card.suit, rank: card.rank })),
-    discardPile: game.deck.discardPile.map(card => ({ suit: card.suit, rank: card.rank })),
-    jokers: game.jokers.map(joker => ({ id: joker.id, data: joker.data }))
+    handLevels: game.handLevels,
+    consumables: (game.consumables || []).map(card => ({
+      id: card.id,
+      negative: Boolean(card.negative),
+      extraSell: card.extraSell || 0
+    })),
+    handSizeMod: game.handSizeMod || 0,
+    rarityBonus: game.rarityBonus || 0,
+    bossDisabled: Boolean(game.bossDisabled),
+    stats: game.stats,
+    flags: game.flags,
+    hand: game.hand.cards.map(serializeCard),
+    deck: game.deck.cards.map(serializeCard),
+    discardPile: game.deck.discardPile.map(serializeCard),
+    jokers: game.jokers.map(joker => ({ id: joker.id, data: joker.data, edition: joker.edition || null }))
   };
 }
 
@@ -83,12 +116,41 @@ export class SaveManager {
       game.bossId = null;
     }
 
+    game.handLevels = createHandLevels(saveData.handLevels);
+    game.handSizeMod = saveData.handSizeMod || 0;
+    game.rarityBonus = saveData.rarityBonus || 0;
+    game.bossDisabled = Boolean(saveData.bossDisabled);
+    game.stats = {
+      tarotsUsed: 0,
+      planetsUsed: 0,
+      uniquePlanets: [],
+      lastConsumable: null,
+      ...(saveData.stats || {})
+    };
+    if (!Array.isArray(game.stats.uniquePlanets)) game.stats.uniquePlanets = [];
+    game.flags = {
+      grosMichelExtinct: false,
+      blindsSkipped: 0,
+      doubleNextPayout: false,
+      ...(saveData.flags || {})
+    };
+    game.consumables = (saveData.consumables || []).map(entry => {
+      const card = createConsumable(entry.id);
+      if (!card) return null;
+      card.negative = Boolean(entry.negative);
+      card.extraSell = entry.extraSell || 0;
+      return card;
+    }).filter(Boolean);
+
     const jokerMap = jokerKeyById();
     game.jokers = (saveData.jokers || []).map(entry => {
       const id = typeof entry === 'string' ? entry : entry.id;
       const data = typeof entry === 'string' ? undefined : entry.data;
       const key = jokerMap[id];
-      return key ? new Joker(key, data) : null;
+      if (!key) return null;
+      const joker = new Joker(key, data);
+      joker.edition = typeof entry === 'string' ? null : (entry.edition || null);
+      return joker;
     }).filter(joker => joker !== null);
 
     if (saveData.handSize) {
@@ -100,12 +162,12 @@ export class SaveManager {
     game.hand = new Hand();
     game.hand.maxSize = Math.max(game.handSize, saveData.hand?.length || 0);
     (saveData.hand || []).forEach(card => {
-      game.hand.addCards([new Card(card.suit, card.rank)]);
+      game.hand.addCards([restoreCard(card)]);
     });
 
     game.deck = new Deck();
-    game.deck.cards = (saveData.deck || []).map(card => new Card(card.suit, card.rank));
-    game.deck.discardPile = (saveData.discardPile || []).map(card => new Card(card.suit, card.rank));
+    game.deck.cards = (saveData.deck || []).map(restoreCard);
+    game.deck.discardPile = (saveData.discardPile || []).map(restoreCard);
 
     game.scoreRequired = game.getScoreRequired();
   }

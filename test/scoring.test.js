@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { Card } from '../src/cards.js';
 import { HandEvaluator } from '../src/handEvaluator.js';
 import { GameState } from '../src/game.js';
-import { Joker } from '../src/jokers.js';
+import { Joker, JOKER_TYPES, rarityWeights, shopPool } from '../src/jokers.js';
+import { CONSUMABLES, createConsumable } from '../src/consumables.js';
 import { SaveManager, serializeGame } from '../src/save.js';
 import { getScoreRequired } from '../src/blinds.js';
 
@@ -115,7 +116,7 @@ describe('boss rules', () => {
 });
 
 describe('joker effects', () => {
-  it('stacks mult multipliers and lets gambler zero the score', () => {
+  it('stacks mult multipliers on the final hand', () => {
     const game = new GameState();
     game.handsRemaining = 1;
     game.jokers = [new Joker('ACROBAT'), new Joker('ACROBAT')];
@@ -124,19 +125,6 @@ describe('joker effects', () => {
     const stacked = game.playHand([0]);
     assert.equal(stacked.mult, 9);
     assert.equal(stacked.score, 135);
-
-    const gambler = new GameState();
-    gambler.jokers = [new Joker('GAMBLER')];
-    setHand(gambler, [new Card('♠', 'A'), new Card('♥', '2')]);
-    const random = Math.random;
-    Math.random = () => 0.99;
-    try {
-      const bust = gambler.playHand([0]);
-      assert.equal(bust.mult, 0);
-      assert.equal(bust.score, 0);
-    } finally {
-      Math.random = random;
-    }
   });
 
   it('counts held kings and queens, and grows the green joker', () => {
@@ -311,6 +299,9 @@ describe('save migration', () => {
     assert.equal(loaded.scoreRequired, 600);
     assert.equal(loaded.jokers[0].id, 'joker');
     assert.equal(loaded.hand.cards[0].rank, 'A');
+    assert.equal(loaded.hand.cards[0].enhancement, null);
+    assert.equal(loaded.handLevels.PAIR, 1);
+    assert.deepEqual(loaded.consumables, []);
 
     const source = new GameState();
     const green = new Joker('GREEN_JOKER');
@@ -328,5 +319,135 @@ describe('save migration', () => {
     assert.equal(restored.bossId, null);
     assert.equal(restored.handTypeCounts.PAIR, 2);
     assert.equal(restored.getScoreRequired(), 1125);
+  });
+});
+
+describe('official cards', () => {
+  it('has the 150 jokers and the consumable sets', () => {
+    assert.equal(Object.keys(JOKER_TYPES).length, 150);
+    assert.equal(CONSUMABLES.filter(card => card.kind === 'tarot').length, 22);
+    assert.equal(CONSUMABLES.filter(card => card.kind === 'planet').length, 12);
+    assert.equal(CONSUMABLES.filter(card => card.kind === 'spectral').length, 18);
+    const shop = shopPool(new GameState());
+    assert.equal(shop.length, 149);
+    assert.ok(shop.some(([, def]) => def.rarity === '传说'));
+    assert.ok(shop.every(([, def]) => def.id !== 'cavendish'));
+  });
+
+  it('upgrades a pair with mercury', () => {
+    const game = new GameState();
+    setHand(game, [new Card('♠', '2'), new Card('♥', '2'), new Card('♣', '9')]);
+    game.consumables = [createConsumable('mercury')];
+    game.useConsumable(0, []);
+
+    assert.equal(game.handLevels.PAIR, 2);
+    const played = game.playHand([0, 1]);
+    assert.equal(played.chips, 29);
+    assert.equal(played.mult, 3);
+    assert.equal(played.score, 87);
+  });
+
+  it('turns two cards into mult cards with the empress', () => {
+    const game = new GameState();
+    setHand(game, [new Card('♠', '2'), new Card('♥', '2'), new Card('♣', '9')]);
+    game.consumables = [createConsumable('empress')];
+    assert.equal(game.useConsumable(0, [0, 1]), '选中的牌变成了倍率牌');
+    assert.equal(game.hand.cards[0].enhancement, 'mult');
+    assert.equal(game.hand.cards[1].enhancement, 'mult');
+
+    const played = game.playHand([0, 1]);
+    assert.equal(played.mult, 10);
+    assert.equal(played.score, 140);
+  });
+
+  it('doubles glass, multiplies held steel, and retriggers a red seal', () => {
+    const random = Math.random;
+    Math.random = () => 0.99;
+    try {
+      const glass = new GameState();
+      setHand(glass, [new Card('♠', 'A', { enhancement: 'glass' }), new Card('♥', '2')]);
+      const glassPlay = glass.playHand([0]);
+      assert.equal(glassPlay.mult, 2);
+      assert.equal(glassPlay.score, 30);
+      assert.equal(glass.deck.discardPile.some(card => card.enhancement === 'glass'), true);
+
+      const steel = new GameState();
+      setHand(steel, [new Card('♠', 'A'), new Card('♥', '2', { enhancement: 'steel' })]);
+      const steelPlay = steel.playHand([0]);
+      assert.equal(steelPlay.mult, 1.5);
+      assert.equal(steelPlay.score, 22);
+
+      const sealed = new GameState();
+      setHand(sealed, [
+        new Card('♠', '2', { seal: 'red' }),
+        new Card('♥', '2'),
+        new Card('♣', '9')
+      ]);
+      const retriggered = sealed.playHand([0, 1]);
+      assert.equal(retriggered.chips, 16);
+      assert.equal(retriggered.mult, 2);
+      assert.equal(retriggered.score, 32);
+    } finally {
+      Math.random = random;
+    }
+  });
+
+  it('greedy joker scores only diamonds, and blueprint copies +4', () => {
+    const greedy = new GameState();
+    greedy.jokers = [new Joker('GREEDY_JOKER')];
+    setHand(greedy, [new Card('♦', '2'), new Card('♦', '2'), new Card('♠', '9')]);
+    const diamonds = greedy.playHand([0, 1]);
+    assert.equal(diamonds.mult, 8);
+    assert.equal(diamonds.chips, 14);
+
+    const off = new GameState();
+    off.jokers = [new Joker('GREEDY_JOKER')];
+    setHand(off, [new Card('♠', '2'), new Card('♣', '2'), new Card('♥', '9')]);
+    assert.equal(off.playHand([0, 1]).mult, 2);
+
+    const copied = new GameState();
+    copied.jokers = [new Joker('BLUEPRINT'), new Joker('JOKER')];
+    setHand(copied, [new Card('♠', 'A'), new Card('♥', '2')]);
+    assert.equal(copied.playHand([0]).mult, 9);
+  });
+
+  it('saves enhancements, seals, editions and hand levels', () => {
+    const source = new GameState();
+    source.hand.cards = [new Card('♥', 'K', { enhancement: 'steel', seal: 'red', edition: 'foil', bonusChips: 5 })];
+    source.handLevels.PAIR = 3;
+    source.consumables = [createConsumable('pluto')];
+    source.jokers = [new Joker('JOKER')];
+    source.jokers[0].edition = 'negative';
+
+    const restored = new GameState();
+    SaveManager.restoreGame(restored, serializeGame(source));
+    assert.equal(restored.hand.cards[0].enhancement, 'steel');
+    assert.equal(restored.hand.cards[0].seal, 'red');
+    assert.equal(restored.hand.cards[0].edition, 'foil');
+    assert.equal(restored.hand.cards[0].bonusChips, 5);
+    assert.equal(restored.hand.cards[0].toString(), 'K♥ 钢 箔 红');
+    assert.equal(restored.handLevels.PAIR, 3);
+    assert.equal(restored.consumables[0].id, 'pluto');
+    assert.equal(restored.jokers[0].edition, 'negative');
+  });
+
+  it('adds money only for the secret word', () => {
+    const game = new GameState();
+    const before = game.money;
+    assert.deepEqual(rarityWeights(game).map(([, weight]) => weight), [69, 25, 5, 1]);
+    assert.equal(game.applySecret('发大财').ok, true);
+    assert.equal(game.money, before + 50);
+    assert.equal(game.applySecret(' 发大财 ').ok, true);
+    assert.equal(game.applySecret('jackpot').ok, false);
+    assert.equal(game.money, before + 100);
+
+    assert.equal(game.applySecret('欧气').message, '商店里的稀有牌更常见了');
+    assert.deepEqual(rarityWeights(game).map(([, weight]) => weight), [64, 27, 7, 2]);
+    assert.equal(game.rarityOddsText(), '普通 64%  罕见 27%  稀有 7%  传说 2%');
+
+    const restored = new GameState();
+    SaveManager.restoreGame(restored, serializeGame(game));
+    assert.equal(restored.rarityBonus, 1);
+    assert.deepEqual(rarityWeights(restored).map(([, weight]) => weight), [64, 27, 7, 2]);
   });
 });

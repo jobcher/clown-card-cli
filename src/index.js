@@ -5,7 +5,37 @@ import chalk from 'chalk';
 import { GameState } from './game.js';
 import { UI } from './ui.js';
 import { getRandomJoker } from './jokers.js';
+import { selectionFor } from './consumables.js';
 import { SaveManager } from './save.js';
+
+async function offerConsumable(game, card) {
+  if (game.addConsumable(card)) {
+    console.log(chalk.green(`获得了 ${card.name}`));
+    return;
+  }
+  console.log(chalk.yellow('消耗牌槽已满。'));
+  const choice = await UI.askSellConsumable(game.consumables, true);
+  if (choice === -1) {
+    console.log(chalk.gray(`放弃了 ${card.name}`));
+    return;
+  }
+  const sold = game.sellConsumable(choice);
+  if (sold && game.addConsumable(card)) {
+    console.log(chalk.green(`出售了 ${sold.card.name}，获得了 ${card.name}`));
+  }
+}
+
+function rollShop(game) {
+  return [getRandomJoker(game), getRandomJoker(game), getRandomJoker(game)];
+}
+
+async function saySomething(game) {
+  const word = await UI.askSecret();
+  const result = game.applySecret(word);
+  console.log(result.ok ? chalk.green(result.message) : chalk.gray(result.message));
+  console.log(chalk.yellow(`当前商店概率：${game.rarityOddsText()}`));
+  await UI.askContinue();
+}
 
 async function main() {
   UI.clear();
@@ -54,6 +84,10 @@ async function main() {
     UI.printJokers(game);
     UI.printHand(game.hand);
 
+    if (game.isRoundComplete() && !game.isVictory()) {
+      game.tryMrBones();
+    }
+
     if (game.isRoundComplete()) {
       if (game.isVictory()) {
         UI.printVictory();
@@ -69,15 +103,11 @@ async function main() {
           }
         }
 
-        // 商店主循环 - 先生成一次商店小丑牌
-        let shopJokers = [
-          getRandomJoker(),
-          getRandomJoker(),
-          getRandomJoker()
-        ];
+        game.chaosUsed = false;
+        let shopJokers = rollShop(game);
 
         while (true) {
-          const shopAction = await UI.askShop(game.money, game.maxJokers, game.jokers.length);
+          const shopAction = await UI.askShop(game);
 
           if (shopAction === 'skip') {
             break;
@@ -87,7 +117,7 @@ async function main() {
               UI.printHeader(game);
               UI.printJokers(game);
 
-              const slotsFull = game.jokers.length >= game.maxJokers;
+              const slotsFull = game.jokerSlotsUsed() >= game.maxJokers;
 
               if (slotsFull) {
                 console.log(chalk.yellow('你的小丑牌槽位已满! 可以先出售一些小丑牌。\n'));
@@ -99,9 +129,9 @@ async function main() {
                 break;
               }
 
-              UI.printShopJokers(shopJokers);
+              UI.printShopJokers(shopJokers, game);
 
-              const choice = await UI.askJokerPurchase(shopJokers, game.money, slotsFull);
+              const choice = await UI.askJokerPurchase(shopJokers, game);
 
               if (choice === -1) break;
 
@@ -139,9 +169,44 @@ async function main() {
               }
               await UI.askContinue();
             }
+          } else if (shopAction === 'sellConsumable') {
+            const choice = await UI.askSellConsumable(game.consumables);
+            if (choice >= 0) {
+              const sold = game.sellConsumable(choice);
+              if (sold) console.log(chalk.green(`出售了 ${sold.card.name}，获得 $${sold.sellPrice}`));
+            }
+          } else if (shopAction === 'reroll') {
+            if (game.takeReroll()) {
+              shopJokers = rollShop(game);
+              console.log(chalk.green('商店已重掷'));
+            } else {
+              console.log(chalk.red('金钱不足'));
+            }
+            await UI.askContinue();
+          } else if (shopAction === 'secret') {
+            await saySomething(game);
+          } else if (shopAction === 'pack') {
+            const packId = await UI.askPack(game);
+            if (!packId) continue;
+            const cards = game.buyPack(packId);
+            if (!cards) {
+              console.log(chalk.red('金钱不足'));
+              await UI.askContinue();
+              continue;
+            }
+            cards.forEach(card => console.log(`  ${card.name} - ${card.description}`));
+            const pick = await UI.askPackCard(cards);
+            if (pick < 0) {
+              game.skipPack();
+              console.log(chalk.gray('跳过了补充包'));
+            } else {
+              await offerConsumable(game, cards[pick]);
+            }
+            await UI.askContinue();
           }
         }
 
+        game.endShop();
         if (!game.nextRound()) {
           break;
         }
@@ -152,7 +217,7 @@ async function main() {
         break;
       }
     } else {
-      const action = await UI.askMainMenu();
+      const action = await UI.askMainMenu(game);
 
       if (action === 'play') {
         const indices = await UI.askCardSelection(
@@ -204,6 +269,25 @@ async function main() {
         if (indices.length > 0) {
           game.discard(indices);
         }
+      } else if (action === 'use') {
+        const choice = await UI.askConsumable(game.consumables);
+        if (choice < 0) continue;
+        const card = game.consumables[choice];
+        const rule = selectionFor(game, card);
+        let targets = [];
+        if (rule) {
+          const picked = await UI.askCardSelection(game.hand, `${card.name}:`, rule[0], rule[1]);
+          if (picked === 'back') continue;
+          targets = picked;
+        }
+        const message = game.useConsumable(choice, targets);
+        console.log(chalk.cyan(message));
+        await UI.askContinue();
+      } else if (action === 'secret') {
+        await saySomething(game);
+      } else if (action === 'skipBlind') {
+        const yes = await UI.askYesNo('跳过当前盲注？不会获得奖励。', false);
+        if (yes) game.skipBlind();
       } else if (action === 'sortRank') {
         game.hand.sortByRank();
       } else if (action === 'sortSuit') {

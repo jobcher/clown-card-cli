@@ -13,22 +13,83 @@ export const RANK_VALUES = {
   'J': 11, 'Q': 12, 'K': 13, 'A': 14
 };
 
+export const ENHANCEMENTS = {
+  bonus: '奖',
+  mult: '倍',
+  wild: '万',
+  glass: '玻',
+  steel: '钢',
+  gold: '金',
+  stone: '石',
+  lucky: '运'
+};
+
+export const EDITIONS = {
+  foil: '箔',
+  holo: '全',
+  polychrome: '彩',
+  negative: '负'
+};
+
+export const SEALS = {
+  gold: '金封',
+  red: '红',
+  blue: '蓝',
+  purple: '紫'
+};
+
+export function cardMatchesSuit(card, suit, options = {}) {
+  if (!card || card.enhancement === 'stone') return false;
+  if (card.enhancement === 'wild') return true;
+  if (options.smeared) {
+    const red = suit === '♥' || suit === '♦';
+    const cardRed = card.suit === '♥' || card.suit === '♦';
+    return red === cardRed;
+  }
+  return card.suit === suit;
+}
+
 export class Card {
-  constructor(suit, rank) {
+  constructor(suit, rank, mods = {}) {
     this.suit = suit;
     this.rank = rank;
     this.value = RANK_VALUES[rank];
-    this.enhanced = false;
-    this.bonusChips = 0;
+    this.enhanced = Boolean(mods.enhancement);
+    this.enhancement = mods.enhancement || null;
+    this.edition = mods.edition || null;
+    this.seal = mods.seal || null;
+    this.bonusChips = mods.bonusChips || 0;
     this.bonusMult = 0;
+    this.debuffed = false;
   }
 
   toString() {
-    return `${this.rank}${this.suit}`;
+    if (this.enhancement === 'stone') {
+      const tags = ['石'];
+      if (this.edition) tags.push(EDITIONS[this.edition]);
+      if (this.seal) tags.push(SEALS[this.seal]);
+      return tags.join('');
+    }
+    const tags = [];
+    if (this.enhancement) tags.push(ENHANCEMENTS[this.enhancement]);
+    if (this.edition) tags.push(EDITIONS[this.edition]);
+    if (this.seal) tags.push(SEALS[this.seal]);
+    return `${this.rank}${this.suit}${tags.length ? ' ' + tags.join(' ') : ''}`;
   }
 
   isFaceCard() {
     return ['J', 'Q', 'K'].includes(this.rank);
+  }
+
+  clone() {
+    const copy = new Card(this.suit, this.rank, {
+      enhancement: this.enhancement,
+      edition: this.edition,
+      seal: this.seal,
+      bonusChips: this.bonusChips
+    });
+    copy.debuffed = this.debuffed;
+    return copy;
   }
 
   isAce() {

@@ -1,5 +1,5 @@
 // 牌型判断系统
-import { RANK_VALUES } from './cards.js';
+import { RANK_VALUES, cardMatchesSuit } from './cards.js';
 
 export const HAND_TYPES = {
   HIGH_CARD: { name: '高牌', chips: 5, mult: 1, order: 0 },
@@ -12,7 +12,9 @@ export const HAND_TYPES = {
   FOUR_OF_A_KIND: { name: '炸弹', chips: 60, mult: 7, order: 7 },
   STRAIGHT_FLUSH: { name: '同花顺', chips: 100, mult: 8, order: 8 },
   ROYAL_FLUSH: { name: '皇家同花顺', chips: 100, mult: 8, order: 9 },
-  FIVE_OF_A_KIND: { name: '五同', chips: 120, mult: 12, order: 10 }
+  FIVE_OF_A_KIND: { name: '五同', chips: 120, mult: 12, order: 11 },
+  FLUSH_HOUSE: { name: '同花葫芦', chips: 140, mult: 14, order: 12 },
+  FLUSH_FIVE: { name: '同花五条', chips: 160, mult: 16, order: 13 }
 };
 
 export class HandEvaluator {
@@ -21,20 +23,26 @@ export class HandEvaluator {
 
     const minStraight = options.fourFingers ? 4 : 5;
     const minFlush = options.fourFingers ? 4 : 5;
-    const sorted = [...cards].sort((a, b) => b.value - a.value);
+    const sorted = [...cards].filter(card => card.enhancement !== 'stone').sort((a, b) => b.value - a.value);
     const rankCounts = this.getRankCounts(sorted);
-    const suitCounts = this.getSuitCounts(sorted);
+    const suitCounts = this.getSuitCounts(sorted, options);
 
     const results = [];
+
+    const flushFive = this.checkFlushFive(rankCounts, sorted, options);
+    if (flushFive) results.push(flushFive);
 
     const fiveOfAKind = this.checkFiveOfAKind(rankCounts, sorted);
     if (fiveOfAKind) results.push(fiveOfAKind);
 
-    const royalFlush = this.checkRoyalFlush(sorted, suitCounts);
+    const royalFlush = this.checkRoyalFlush(sorted, suitCounts, options);
     if (royalFlush) results.push(royalFlush);
 
-    const straightFlush = this.checkStraightFlush(sorted, suitCounts, minStraight);
+    const straightFlush = this.checkStraightFlush(sorted, suitCounts, minStraight, options);
     if (straightFlush) results.push(straightFlush);
+
+    const flushHouse = this.checkFlushHouse(rankCounts, sorted, options);
+    if (flushHouse) results.push(flushHouse);
 
     const fourOfAKind = this.checkFourOfAKind(rankCounts, sorted);
     if (fourOfAKind) results.push(fourOfAKind);
@@ -42,10 +50,10 @@ export class HandEvaluator {
     const fullHouse = this.checkFullHouse(rankCounts, sorted);
     if (fullHouse) results.push(fullHouse);
 
-    const flush = this.checkFlush(suitCounts, sorted, minFlush);
+    const flush = this.checkFlush(suitCounts, sorted, minFlush, options);
     if (flush) results.push(flush);
 
-    const straight = this.checkStraight(sorted, minStraight);
+    const straight = this.checkStraight(sorted, minStraight, options);
     if (straight) results.push(straight);
 
     const threeOfAKind = this.checkThreeOfAKind(rankCounts, sorted);
@@ -61,10 +69,11 @@ export class HandEvaluator {
       return results.sort((a, b) => HAND_TYPES[b.type].order - HAND_TYPES[a.type].order)[0];
     }
 
+    const pool = sorted.length > 0 ? sorted : [...cards];
     return {
       type: 'HIGH_CARD',
-      primaryCard: sorted[0],
-      cards: [sorted[0]],
+      primaryCard: pool[0],
+      cards: pool[0] ? [pool[0]] : [],
       chips: HAND_TYPES.HIGH_CARD.chips,
       mult: HAND_TYPES.HIGH_CARD.mult
     };
@@ -73,17 +82,56 @@ export class HandEvaluator {
   static getRankCounts(cards) {
     const counts = {};
     for (const card of cards) {
+      if (card.enhancement === 'stone') continue;
       counts[card.rank] = (counts[card.rank] || 0) + 1;
     }
     return counts;
   }
 
-  static getSuitCounts(cards) {
-    const counts = {};
+  static getSuitCounts(cards, options = {}) {
+    const counts = { '♠': 0, '♥': 0, '♦': 0, '♣': 0 };
     for (const card of cards) {
-      counts[card.suit] = (counts[card.suit] || 0) + 1;
+      for (const suit of Object.keys(counts)) {
+        if (cardMatchesSuit(card, suit, options)) counts[suit] += 1;
+      }
     }
     return counts;
+  }
+
+  static cardsOfSuit(cards, suit, options = {}) {
+    return cards.filter(card => cardMatchesSuit(card, suit, options));
+  }
+
+  static checkFlushFive(rankCounts, sorted, options = {}) {
+    for (const [rank, count] of Object.entries(rankCounts)) {
+      if (count < 5) continue;
+      const cards = sorted.filter(card => card.rank === rank);
+      const suits = this.getSuitCounts(cards, options);
+      if (Object.values(suits).some(total => total >= 5)) {
+        return {
+          type: 'FLUSH_FIVE',
+          primaryCard: cards[0],
+          cards: cards.slice(0, 5),
+          chips: HAND_TYPES.FLUSH_FIVE.chips,
+          mult: HAND_TYPES.FLUSH_FIVE.mult
+        };
+      }
+    }
+    return null;
+  }
+
+  static checkFlushHouse(rankCounts, sorted, options = {}) {
+    const full = this.checkFullHouse(rankCounts, sorted);
+    if (!full) return null;
+    const suits = this.getSuitCounts(full.cards, options);
+    if (!Object.values(suits).some(total => total >= full.cards.length)) return null;
+    return {
+      type: 'FLUSH_HOUSE',
+      primaryCard: full.primaryCard,
+      cards: full.cards,
+      chips: HAND_TYPES.FLUSH_HOUSE.chips,
+      mult: HAND_TYPES.FLUSH_HOUSE.mult
+    };
   }
 
   static checkFiveOfAKind(rankCounts, sorted) {
@@ -102,17 +150,17 @@ export class HandEvaluator {
     return null;
   }
 
-  static checkRoyalFlush(cards, suitCounts) {
+  static checkRoyalFlush(cards, suitCounts, options = {}) {
     const royalRanks = ['10', 'J', 'Q', 'K', 'A'];
     for (const [suit, count] of Object.entries(suitCounts)) {
       if (count >= 5) {
-        const suitedCards = cards.filter(c => c.suit === suit);
-        const hasAllRoyal = royalRanks.every(rank => suitedCards.some(c => c.rank === rank));
+        const suitedCards = this.cardsOfSuit(cards, suit, options);
+        const hasAllRoyal = royalRanks.every(rank => suitedCards.some(card => card.rank === rank));
         if (hasAllRoyal) {
-          const royalCards = suitedCards.filter(c => royalRanks.includes(c.rank));
+          const royalCards = suitedCards.filter(card => royalRanks.includes(card.rank));
           return {
             type: 'ROYAL_FLUSH',
-            primaryCard: royalCards.find(c => c.rank === 'A'),
+            primaryCard: royalCards.find(card => card.rank === 'A'),
             cards: royalCards,
             chips: HAND_TYPES.ROYAL_FLUSH.chips,
             mult: HAND_TYPES.ROYAL_FLUSH.mult
@@ -123,11 +171,11 @@ export class HandEvaluator {
     return null;
   }
 
-  static checkStraightFlush(cards, suitCounts, minStraight = 5) {
+  static checkStraightFlush(cards, suitCounts, minStraight = 5, options = {}) {
     for (const [suit, count] of Object.entries(suitCounts)) {
       if (count >= minStraight) {
-        const suitedCards = cards.filter(c => c.suit === suit).sort((a, b) => b.value - a.value);
-        const straight = this.findStraight(suitedCards, minStraight);
+        const suitedCards = this.cardsOfSuit(cards, suit, options).sort((a, b) => b.value - a.value);
+        const straight = this.findStraight(suitedCards, minStraight, options);
         if (straight) {
           return {
             type: 'STRAIGHT_FLUSH',
@@ -184,11 +232,11 @@ export class HandEvaluator {
     return null;
   }
 
-  static checkFlush(suitCounts, sorted, minFlush = 5) {
+  static checkFlush(suitCounts, sorted, minFlush = 5, options = {}) {
     for (const [suit, count] of Object.entries(suitCounts)) {
       const take = count >= 5 ? 5 : (count >= minFlush ? count : 0);
       if (take > 0) {
-        const cards = sorted.filter(c => c.suit === suit).slice(0, take);
+        const cards = this.cardsOfSuit(sorted, suit, options).slice(0, take);
         return {
           type: 'FLUSH',
           primaryCard: cards[0],
@@ -201,8 +249,8 @@ export class HandEvaluator {
     return null;
   }
 
-  static checkStraight(sorted, minStraight = 5) {
-    const straight = this.findStraight(sorted, minStraight);
+  static checkStraight(sorted, minStraight = 5, options = {}) {
+    const straight = this.findStraight(sorted, minStraight, options);
     if (straight) {
       return {
         type: 'STRAIGHT',
@@ -215,37 +263,44 @@ export class HandEvaluator {
     return null;
   }
 
-  static findStraight(cards, minLength = 5) {
-    const five = this.findStraightOfLength(cards, 5);
+  static findStraight(cards, minLength = 5, options = {}) {
+    const five = this.findStraightOfLength(cards, 5, false);
     if (five) return five;
-    if (minLength <= 4) return this.findStraightOfLength(cards, 4);
+    if (options.shortcut) {
+      const gapped = this.findStraightOfLength(cards, 5, true);
+      if (gapped) return gapped;
+    }
+    if (minLength <= 4) {
+      const four = this.findStraightOfLength(cards, 4, false);
+      if (four) return four;
+      if (options.shortcut) return this.findStraightOfLength(cards, 4, true);
+    }
     return null;
   }
 
-  static findStraightOfLength(cards, length) {
+  static findStraightOfLength(cards, length, shortcut = false) {
     if (cards.length < length) return null;
+    const high = this.findStraightValues(cards.map(card => card.value), length, shortcut);
+    if (high) return high.map(value => cards.find(card => card.value === value));
+    const lowValues = cards.map(card => (card.value === 14 ? 1 : card.value));
+    const low = this.findStraightValues(lowValues, length, shortcut);
+    if (!low) return null;
+    return low.map(value => cards.find(card => (value === 1 ? card.value === 14 : card.value === value)));
+  }
 
-    const uniqueValues = [...new Set(cards.map(c => c.value))].sort((a, b) => b - a);
-
+  static findStraightValues(values, length, shortcut) {
+    const uniqueValues = [...new Set(values)].sort((a, b) => b - a);
+    const allowed = (gap) => gap === 1 || (shortcut && gap === 2);
     for (let i = 0; i <= uniqueValues.length - length; i++) {
       let isStraight = true;
       for (let j = 0; j < length - 1; j++) {
-        if (uniqueValues[i + j] - uniqueValues[i + j + 1] !== 1) {
+        if (!allowed(uniqueValues[i + j] - uniqueValues[i + j + 1])) {
           isStraight = false;
           break;
         }
       }
-      if (isStraight) {
-        const straightValues = uniqueValues.slice(i, i + length);
-        return straightValues.map(v => cards.find(c => c.value === v));
-      }
+      if (isStraight) return uniqueValues.slice(i, i + length);
     }
-
-    const wheelValues = length === 5 ? [5, 4, 3, 2, 14] : [4, 3, 2, 14];
-    if (wheelValues.every(value => uniqueValues.includes(value))) {
-      return wheelValues.map(value => cards.find(c => c.value === value));
-    }
-
     return null;
   }
 
